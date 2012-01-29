@@ -1,0 +1,30 @@
+------
+CONGEN
+------
+
+Goal: Generate a mathematical theorem proven by induction
+
+Running the program:
+
+./main.sh <theorem> <start> <end> <isabelle>
+
+    <theorem> = name of the theorem (e.g. MyTheorem) (NO SPACES!)
+    <start> = integer to start counting lemmas (recommended 0)
+    <end> = integer to stop lemma attempts (recommended 10)
+    <isabelle> = the path to Isabelle (e.g. /usr/local/Isabelle)
+
+NOTES:
+
+- This program has been written to work with Isabelle2011, so use other versions at your own risk
+
+- Let the program run until it echoes "Done!"
+
+- Do NOT leave a trailing slash at the end of the Isabelle path command
+
+- For unlimited attempts at rewriting the lemma, set <start> greater than <end>
+
+- If you are getting an error with any of the Java files, try compiling them by running "javac TheRandomizer.java" or "javac WriteUp.java" in the command line, though this should not be necessary since the class files are included
+
+- Saves the ML theorem file in the proven_theorems folder titled "<theorem>.thy"
+
+- Saves a readable writeup of the theorem in the writeup folder titled "<theorem>"
