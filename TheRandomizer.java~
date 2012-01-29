@@ -1,0 +1,1352 @@
+/**
+ * TheRandomizer.java:
+ *   Generate a random theory, then generate a conjecture off of that
+ *   theory to prove as a theorem. The proof is to be done using
+ *   induction.
+ * 
+ * @author Dan Shea
+ * Ground Up Software, Inc.
+ */
+
+import java.util.*;
+import java.io.*;
+
+public class TheRandomizer
+{
+   //--------------- instance variables ---------------------------------------
+   Random rng = new Random();
+   String bfs = "";
+   int numTypes = 0;
+   final int maxDepth = 4;
+   int curDepth = 1;
+   int curCase = 0;  // 0 = base case, 1 = step case
+   int lor = 0;      // 0 = left side, 1 = right side
+   boolean placedFunc = true;
+   boolean saveIt = true;
+   String inductOn = "";
+   
+   // input/output type of f is either:
+   // 0 = bool, 1 = nat, 2 = T, 3 = T_1, 4 = T_2, 5 = T_3
+   int f_inType1 = -1;
+   int f_inType2 = -1;
+   int f_outType = -1;
+   
+   // arguments for each constructor function
+   int ca_args = 0;
+   int cb_args = 0;
+   int cc_args = 0;
+   int cd_args = 0;
+   
+   // input type of each constructor function parameter
+   // 0 = bool, 1 = nat, 2 = T, 3 = T_1, 4 = T_2, 5 = T_3
+   ArrayList<Integer> ca_inType = new ArrayList<Integer>( );
+   ArrayList<Integer> cb_inType = new ArrayList<Integer>( );
+   ArrayList<Integer> cc_inType = new ArrayList<Integer>( );
+   ArrayList<Integer> cd_inType = new ArrayList<Integer>( );
+   
+   // type of each variable and constructor function
+   // 0 = bool, 1 = nat, 2 = T, 3 = T_1, 4 = T_2, 5 = T_3
+   int xType = -1;
+   int yType = -1;
+   int zType = -1;
+   int caType = -1;
+   int cbType = -1;
+   int ccType = -1;
+   int cdType = -1;
+   int lemXType = -1;
+   int lemYType = -1;
+   int lemZType = -1;
+   
+   // does the variable occur on the left to be used on the right?
+   boolean xLeft = false;
+   boolean yLeft = false;
+   boolean zLeft = false;
+   boolean lemXLeft = false;
+   boolean lemYLeft = false;
+   boolean lemZLeft = false;
+   
+   //------------------ constructor -------------------------------------------
+   /**
+    *  Either construct a new theory or rewrite the lemma
+    */
+   public TheRandomizer( int check )
+   {
+      if ( check == 0 )
+      {
+         // prefix all theories
+         bfs = "theory TheGenerator\nimports Main\nbegin\n\n";
+         
+         // generate a random number of data structures
+         numTypes = rng.nextInt( 2 ) + 1;
+         bfs += genDatatype();
+         bfs += "\n\n";
+         
+         // generate a random recursive function
+         bfs += genFunction();
+         bfs += "\n\n";
+         
+         // generate a random lemma (conjecture)
+         bfs += makeLemma() + "\n";
+         bfs += "nitpick[timeout = 600]\n";
+         bfs += "by (induct " + inductOn + " rule: f.induct) (auto)\n";
+         bfs += "end";
+         
+         // some checks to see if they are logically valid
+         if ( numTypes == 1 )
+         {
+            int count = 0;
+            if ( xType == 2 )
+               count++;
+            if ( yType == 2 )
+               count++;
+            if ( zType == 2 )
+               count++;
+            if ( count < 2 )
+               saveIt = false;
+         }
+         
+         if ( saveIt )
+            writeMe();
+         else
+         {
+            //System.err.println( "Invalid theory generated; run again" );
+            System.out.println( "-------------------------" );
+            new TheRandomizer( 0 );
+         }
+      }
+      else
+      {
+         try
+         {
+            String success = "";
+            File inFile = new File( "output.txt" );
+            Scanner scan = new Scanner( inFile );
+            String temp;
+            boolean solved = true;
+            boolean breakout = false;
+            
+            // check for the success of the conjecture
+            while ( scan.hasNextLine() && !breakout )
+            {
+               temp = scan.nextLine();
+               if ( temp.indexOf( "lemma f" ) > -1 )
+                  breakout = true;
+               else if ( temp.indexOf( "lemma" ) > -1 ||
+                   temp.startsWith( "Nitpick found a " ) ||
+                   temp.startsWith( "*** Failed to finish proof" ) )
+               {
+                  success = "New lemma";
+                  bfs += makeLemma();
+                  rewriteLemma();
+                  solved = false;
+                  breakout = true;
+               }
+               if ( temp.startsWith( "*** Nonemptiness check failed" ) ||
+                   temp.startsWith( "*** Malformed definition" ) ||
+                   temp.startsWith( "*** Unfinished subgoals" ) ||
+                   temp.startsWith( "*** Type unification failed" ) ||
+                   temp.startsWith( "### Ignoring redundant equation" ) )
+               {
+                  success = "Try again";
+                  solved = false;
+                  breakout = true;
+               }
+            }
+            
+            if ( solved )
+               success = "It works!";
+            
+            FileWriter outFile = new FileWriter( "check.txt" );
+            PrintWriter out = new PrintWriter( outFile );
+            out.println( success );
+            out.close();
+         } catch ( Exception e ) {
+            e.printStackTrace();
+         }
+      }
+   }
+   
+   //------------------ genDatatype -------------------------------------------
+   /**
+    * Generate one or two random datatypes
+    * (future work: perhaps three)
+    * 
+    * for all t:
+    *   0 = "bool"
+    *   1 = "nat"
+    *   2 = T
+    */
+   private String genDatatype( )
+   {
+      int t = 0;
+      String temp = "datatype ";
+      
+      if ( numTypes == 1 )
+      {
+         temp += "T = C_a ";
+         caType = 2;
+         cbType = 2;
+      }
+      else if ( numTypes >= 2 )
+      {
+         temp += "T_1 = C_a ";
+         caType = 3;
+         cbType = 3;
+      }
+      
+      // generate the first constructor function C_a
+      ca_args = rng.nextInt( 2 ) + 1;
+      t = rng.nextInt( 3 );
+      if ( t == 0 )
+      {
+         temp += "\"bool\"";
+         ca_inType.add( 0 );
+      }
+      else if ( t == 1 )
+      {
+         temp += "\"nat\"";
+         ca_inType.add( 1 );
+      }
+      else
+      {
+         if ( numTypes == 1 )
+         {
+            temp += "\"T\"";
+            ca_inType.add( 2 );
+         }
+         else if ( numTypes >= 2 )
+         {
+            temp += "\"T_1\"";
+            ca_inType.add( 3 );
+         }
+      }
+      
+      if ( ca_args >= 2 )
+      {
+         t = rng.nextInt( 3 );
+         if ( t == 0 )
+         {
+            temp += " \"bool\"";
+            ca_inType.add( 0 );
+         }
+         else if ( t == 1 )
+         {
+            temp += " \"nat\"";
+            ca_inType.add( 1 );
+         }
+         else
+         {
+            if ( numTypes == 1 )
+            {
+               temp += " \"T\"";
+               ca_inType.add( 2 );
+            }
+            else if ( numTypes >= 2 )
+            {
+               temp += " \"T_1\"";
+               ca_inType.add( 3 );
+            }
+         }
+      }
+      
+      // generate the second constructor function C_b
+      temp += " | C_b ";
+      cb_args = rng.nextInt( 2 ) + 1;
+      t = rng.nextInt( 3 );
+      if ( t == 0 )
+      {
+         temp += "\"bool\"";
+         cb_inType.add( 0 );
+      }
+      else if ( t == 1 )
+      {
+         temp += "\"nat\"";
+         cb_inType.add( 1 );
+      }
+      else
+      {
+         if ( numTypes == 1 )
+         {
+            temp += "\"T\"";
+            cb_inType.add( 2 );
+         }
+         else if ( numTypes >= 2 )
+         {
+            temp += "\"T_1\"";
+            cb_inType.add( 3 );
+         }
+      }
+      
+      if ( cb_args == 2 )
+      {
+         t = rng.nextInt( 3 );
+         if ( t == 0 )
+         {
+            temp += " \"bool\"";
+            cb_inType.add( 0 );
+         }
+         else if ( t == 1 )
+         {
+            temp += " \"nat\"";
+            cb_inType.add( 1 );
+         }
+         else
+         {
+            if ( numTypes == 1 )
+            {
+               temp += " \"T\"";
+               cb_inType.add( 2 );
+            }
+            else if ( numTypes >= 2 )
+            {
+               temp += " \"T_1\"";
+               cb_inType.add( 3 );
+            }
+         }
+      }
+      
+      // declare the second data structure if necessary
+      if ( numTypes >= 2 )
+      {
+         temp += "\ndatatype T_2 = C_c ";
+         ccType = 4;
+         cdType = 4;
+         
+         // generate the first constructor function C_c
+         cc_args = rng.nextInt( 2 ) + 1;
+         t = rng.nextInt( 3 );
+         if ( t == 0 )
+         {
+            temp += "\"bool\"";
+            cc_inType.add( 0 );
+         }
+         else if ( t == 1 )
+         {
+            temp += "\"nat\"";
+            cc_inType.add( 1 );
+         }
+         else
+         {
+            temp += "\"T_2\"";
+            cc_inType.add( 4 );
+         }
+         
+         if ( cc_args == 2 )
+         {
+            t = rng.nextInt( 3 );
+            if ( t == 0 )
+            {
+               temp += " \"bool\"";
+               cc_inType.add( 0 );
+            }
+            else if ( t == 1 )
+            {
+               temp += " \"nat\"";
+               cc_inType.add( 1 );
+            }
+            else
+            {
+               temp += " \"T_2\"";
+               cc_inType.add( 4 );
+            }
+         }
+         
+         // generate the second constructor function C_d
+         temp += " | C_d ";
+         cd_args = rng.nextInt( 2 ) + 1;
+         t = rng.nextInt( 3 );
+         if ( t == 0 )
+         {
+            temp += "\"bool\"";
+            cd_inType.add( 0 );
+         }
+         else if ( t == 1 )
+         {
+            temp += "\"nat\"";
+            cd_inType.add( 1 );
+         }
+         else
+         {
+            temp += "\"T_2\"";
+            cd_inType.add( 4 );
+         }
+         
+         if ( cd_args == 2 )
+         {
+            t = rng.nextInt( 3 );
+            if ( t == 0 )
+            {
+               temp += " \"bool\"";
+               cd_inType.add( 0 );
+            }
+            else if ( t == 1 )
+            {
+               temp += " \"nat\"";
+               cd_inType.add( 1 );
+            }
+            else
+            {
+               temp += " \"T_2\"";
+               cd_inType.add( 4 );
+            }
+         }
+      }
+      
+      return temp;
+   }
+   
+   //------------------ genFunction -------------------------------------------
+   /**
+    * Generate a random recursive function with a base case and a step case
+    */
+   private String genFunction( )
+   {
+      String temp = "";
+      if ( numTypes == 1 )
+      {
+         temp = "fun f :: \"T => T => T\"\nwhere\n  ";
+         f_inType1 = 2;
+         f_inType2 = 2;
+         f_outType = 2;
+      }
+      else if ( numTypes == 2 )
+      {
+         /*temp = "fun f :: \"T_1 => T_2 => T_1\"\nwhere\n  ";
+         f_inType1 = 3;
+         f_inType2 = 4;
+         f_outType = 3;*/
+         temp = "fun f :: \"";
+         int tType = rng.nextInt( 2 ) + 1;
+         if ( tType == 1 )
+         {
+            temp += "T_1 => ";
+            f_inType1 = 3;
+         }
+         else
+         {
+            temp += "T_2 => ";
+            f_inType1 = 4;
+         }
+         tType = rng.nextInt( 2 ) + 1;
+         if ( tType == 1 )
+         {
+            temp += "T_1 => ";
+            f_inType2 = 3;
+         }
+         else
+         {
+            temp += "T_2 => ";
+            f_inType2 = 4;
+         }
+         tType = rng.nextInt( 2 ) + 1;
+         if ( tType == 1 )
+         {
+            temp += "T_1";
+            f_outType = 3;
+         }
+         else
+         {
+            temp += "T_2";
+            f_outType = 4;
+         }
+         temp += "\"\nwhere\n  ";
+      }
+      else
+      {
+         temp = "fun f :: \"";
+         int tType = rng.nextInt( 3 ) + 1;
+         if ( tType == 1 )
+         {
+            temp += "T_1 => ";
+            f_inType1 = 3;
+         }
+         else if ( tType == 2 )
+         {
+            temp += "T_2 => ";
+            f_inType1 = 4;
+         }
+         else
+         {
+            temp += "T_3 => ";
+            f_inType1 = 5;
+         }
+         tType = rng.nextInt( 3 ) + 1;
+         if ( tType == 1 )
+         {
+            temp += "T_1 => ";
+            f_inType2 = 3;
+         }
+         else if ( tType == 2 )
+         {
+            temp += "T_2 => ";
+            f_inType2 = 4;
+         }
+         else
+         {
+            temp += "T_3 => ";
+            f_inType2 = 5;
+         }
+         tType = rng.nextInt( 3 ) + 1;
+         if ( tType == 1 )
+         {
+            temp += "T_1";
+            f_outType = 3;
+         }
+         else if ( tType == 2 )
+         {
+            temp += "T_2";
+            f_outType = 4;
+         }
+         else
+         {
+            temp += "T_3";
+            f_outType = 5;
+         }
+         temp += "\"\nwhere\n  ";
+      }
+      
+      // generate the base case
+      temp += genLeft() + genRight() + "\"\n| ";
+      curCase = 1;
+      System.err.println( "xType: " + xType );
+      System.err.println( "yType: " + yType );
+      System.err.println( "zType: " + zType );
+      
+      // generate the step case
+      xLeft = false;
+      yLeft = false;
+      zLeft = false;
+      temp += genLeft() + genRight() + "\"";
+      curCase = 0;
+      
+      return temp;
+   }
+   
+   //------------------- genLeft ----------------------------------------------
+   /**
+    * Generate the left side of a case of a recursive function
+    */
+   private String genLeft( )
+   {
+      String temp = "\"f ";
+      int fos = rng.nextInt( 2 ) + 1;  // place the constructor 1st or 2nd?
+      if ( fos == 1 )
+      {
+         temp += doStruct( f_inType1, 'q' ) + " ";
+         char tmp = getVar( rng.nextInt( 3 ) + 1 );
+         boolean assigned = false;
+         int count = 0;
+         while ( !assigned )
+         {
+            if ( tmp == 'x' && xType == f_inType2 )
+            {
+               temp += tmp + " = ";
+               xLeft = true;
+               assigned = true;
+            }
+            else if ( tmp == 'y' && yType == f_inType2 )
+            {
+               temp += tmp + " = ";
+               yLeft = true;
+               assigned = true;
+            }
+            else if ( tmp == 'z' && zType == f_inType2 )
+            {
+               temp += tmp + " = ";
+               zLeft = true;
+               assigned = true;
+            }
+            else if ( tmp == 'x' && xType == -1 )
+            {
+               xType = f_inType2;
+               temp += tmp + " = ";
+               xLeft = true;
+               assigned = true;
+            }
+            else if ( tmp == 'y' && yType == -1 )
+            {
+               yType = f_inType2;
+               temp += tmp + " = ";
+               yLeft = true;
+               assigned = true;
+            }
+            else if ( tmp == 'z' && zType == -1 )
+            {
+               zType = f_inType2;
+               temp += tmp + " = ";
+               zLeft = true;
+               assigned = true;
+            }
+            else
+            {
+               tmp = getVar( rng.nextInt( 3 ) + 1 );
+               count++;
+               if ( count == 10 )
+               {
+                  assigned = true;
+                  saveIt = false;
+               }
+            }
+         }
+      }
+      else if ( fos == 2 )
+      {
+         char tmp = getVar( rng.nextInt( 3 ) + 1 );
+         boolean assigned = false;
+         int count = 0;
+         while ( !assigned )
+         {
+            if ( tmp == 'x' && xType == f_inType1 )
+            {
+               temp += tmp;
+               xLeft = true;
+               assigned = true;
+            }
+            else if ( tmp == 'y' && yType == f_inType1 )
+            {
+               temp += tmp;
+               yLeft = true;
+               assigned = true;
+            }
+            else if ( tmp == 'z' && zType == f_inType1 )
+            {
+               temp += tmp;
+               zLeft = true;
+               assigned = true;
+            }
+            else if ( tmp == 'x' && xType == -1 )
+            {
+               xType = f_inType1;
+               temp += tmp;
+               xLeft = true;
+               assigned = true;
+            }
+            else if ( tmp == 'y' && yType == -1 )
+            {
+               yType = f_inType1;
+               temp += tmp;
+               yLeft = true;
+               assigned = true;
+            }
+            else if ( tmp == 'z' && zType == -1 )
+            {
+               zType = f_inType1;
+               temp += tmp;
+               zLeft = true;
+               assigned = true;
+            }
+            else
+            {
+               tmp = getVar( rng.nextInt( 3 ) + 1 );
+               count++;
+               if ( count == 10 )
+               {
+                  assigned = true;
+                  saveIt = false;
+               }
+            }
+         }
+         count = 0;
+         temp += " " + doStruct( f_inType2, 'q' ) + " = ";
+      }
+      curDepth = 1;
+      lor = 1;
+      return temp;
+   }
+   
+   //------------------- genRight ---------------------------------------------
+   /**
+    * Generate the right side of a case of a recursive function
+    */
+   private String genRight( )
+   {
+      String temp = "";
+      
+      if ( curCase == 1 )
+         placedFunc = false;
+      
+      // place a function call, variable, or constructor function?
+      int fork = rng.nextInt( 4 ) + 1;
+      if ( fork == 1 )
+      {
+         if ( curCase == 1 )
+         {
+            temp += placeFunc();
+            placedFunc = true;
+         }
+         else
+         {
+            if ( xType == f_outType && xLeft )
+               temp += "x";
+            else if ( yType == f_outType && yLeft )
+               temp += "y";
+            else if ( zType == f_outType && zLeft )
+               temp += "z";
+            else
+               saveIt = false;
+         }
+      }
+      else
+      {
+         if ( caType == f_outType || cbType == f_outType ||
+             ccType == f_outType || cdType == f_outType )
+         {
+            // check if the valid constructor functions can input f_outType
+            ArrayList<Character> validTypes = new ArrayList<Character>( );
+            if ( caType == f_outType )
+               validTypes.add( 'a' );
+            if ( cbType == f_outType )
+               validTypes.add( 'b' );
+            if ( ccType == f_outType )
+               validTypes.add( 'c' );
+            if ( cdType == f_outType )
+               validTypes.add( 'd' );
+            if ( validTypes.size() > 0 )
+               temp += doStruct( f_outType, validTypes.get
+                                   ( rng.nextInt( validTypes.size() ) ) );
+            else
+            {
+               if ( curCase == 1 )
+                  temp += placeFunc();
+               else
+               {
+                  if ( xType == f_outType && xLeft ) 
+                     temp += "x";
+                  else if ( yType == f_outType && yLeft )
+                     temp += "y";
+                  else if ( zType == f_outType && zLeft )
+                     temp += "z";
+                  else
+                     saveIt = false;
+               }
+            }
+         }
+         else
+         {
+            if ( curCase == 1 )
+            {
+               temp += placeFunc();
+               placedFunc = true;
+            }
+            else
+            {
+               if ( xType == f_outType && xLeft )
+                  temp += "x";
+               else if ( yType == f_outType && yLeft )
+                  temp += "y";
+               else if ( zType == f_outType && zLeft )
+                  temp += "z";
+               else
+                  saveIt = false;
+            }
+         }
+      }
+      curDepth = 1;
+      lor = 0;
+      return temp;
+   }
+   
+   //------------------- doStruct ---------------------------------------------
+   /**
+    * Return a call to a constructor function
+    * Takes an int representing the desired output
+    *   0 = bool, 1 = nat, 2 = T, 3 = T_1, 4 = T_2, 5 = T_3
+    * Takes a char indicating a particular constructor function to use
+    */
+   private String doStruct( int outType, char seed )
+   {
+      if ( curDepth >= maxDepth )
+         return "";
+      String temp = "(";
+      int struct = 0;
+      
+      if ( seed == 'q' )
+      {
+         if ( outType == 2 || outType == 3 )
+         {
+            int mix = rng.nextInt( 2 ) + 1;
+            if ( mix == 1 )
+            {
+               temp += "C_a";
+               struct = 0;
+            }
+            else
+            {
+               temp += "C_b";
+               struct = 1;
+            }
+         }
+         else if ( outType == 4 )
+         {
+            int mix = rng.nextInt( 2 ) + 1;
+            if ( mix == 1 )
+            {
+               temp += "C_c";
+               struct = 2;
+            }
+            else
+            {
+               temp += "C_d";
+               struct = 3;
+            }
+         }
+      }
+      else if ( seed == 'a' )
+      {
+         temp += "C_a";
+         struct = 0;
+      }
+      else if ( seed == 'b' )
+      {
+         temp += "C_b";
+         struct = 1;
+      }
+      else if ( seed == 'c' )
+      {
+         temp += "C_c";
+         struct = 2;
+      }
+      else if ( seed == 'd' )
+      {
+         temp += "C_d";
+         struct = 3;
+      }
+      else if ( curCase == 1 && !placedFunc )
+      {
+         placedFunc = true;
+         return placeFunc();
+      }
+      
+      ArrayList<Integer> inTypes = new ArrayList<Integer>( );
+      if ( struct == 0 )
+         inTypes.addAll( ca_inType );
+      else if ( struct == 1 )
+         inTypes.addAll( cb_inType );
+      else if ( struct == 2 )
+         inTypes.addAll( cc_inType );
+      else if ( struct == 3 )
+         inTypes.addAll( cd_inType );
+      
+      if ( lor == 1 && curCase == 1 && !placedFunc )
+      {
+         boolean canNest = false;
+         for ( int i = 0; i < inTypes.size(); i++ )
+         {
+            if ( inTypes.get( i ) == f_outType )
+               canNest = true;
+         }
+         if ( !canNest )
+            return placeFunc();
+      }
+      
+      temp += setArgs( struct );
+      temp += ")";
+      curDepth = 1;
+      return temp;
+   }
+   
+   //-------------------- getVar ----------------------------------------------
+   /**
+    * Return a variable for the recursive function
+    */
+   private char getVar( int num )
+   {
+      switch ( num ) {
+         case 1: return 'x';
+         case 2: return 'y';
+         case 3: return 'z';
+         default: return 'x';
+      }
+   }
+   
+   //------------------- setArgs ----------------------------------------------
+   /**
+    * Assign a variable for each parameter in the constructor function
+    */
+   private String setArgs( int constr )
+   {
+      try
+      {
+         String temp = "";
+         ArrayList<Character> validTypes = new ArrayList<Character>( );
+         ArrayList<Integer> inTypes = new ArrayList<Integer>( );
+         if ( constr == 0 )
+            inTypes.addAll( ca_inType );
+         else if ( constr == 1 )
+            inTypes.addAll( cb_inType );
+         else if ( constr == 2 )
+            inTypes.addAll( cc_inType );
+         else if ( constr == 3 )
+            inTypes.addAll( cd_inType );
+         
+         for ( int i = 0; i < inTypes.size(); i++ )
+         {
+            int fork = rng.nextInt( 3 ) + 1;
+            // place a variable or another constructor function?
+            if ( curDepth < maxDepth )
+            {
+               if ( fork == 1 && inTypes.get( i ) >= 2 )
+               {
+                  curDepth++;
+                  temp += " " + doStruct( inTypes.get( i ), 'q' );
+               }
+               else
+               {
+                  if ( !placedFunc && inTypes.get( i ) == f_outType )
+                  {
+                     temp += " " + placeFunc();
+                     continue;
+                  }
+                  if ( lor == 0 )
+                  {
+                     if ( xType == inTypes.get( i ) || xType == -1 )
+                        validTypes.add( 'x' );
+                     if ( yType == inTypes.get( i ) || yType == -1 )
+                        validTypes.add( 'y' );
+                     if ( zType == inTypes.get( i ) || zType == -1 )
+                        validTypes.add( 'z' );
+                  }
+                  else if ( lor == 1 )
+                  {
+                     if ( xType == inTypes.get( i ) && xLeft )
+                        validTypes.add( 'x' );
+                     if ( yType == inTypes.get( i ) && yLeft )
+                        validTypes.add( 'y' );
+                     if ( zType == inTypes.get( i ) && zLeft )
+                        validTypes.add( 'z' );
+                  }
+                  char tmp;
+                  tmp = validTypes.get( rng.nextInt( validTypes.size() ) );
+                  temp += " " + tmp;
+                  if ( tmp == 'x' )
+                  {
+                     xType = inTypes.get( i );
+                     if ( lor == 0 )
+                        xLeft = true;
+                  }
+                  else if ( tmp == 'y' )
+                  {
+                     yType = inTypes.get( i );
+                     if ( lor == 0 )
+                        yLeft = true;
+                  }
+                  else if ( tmp == 'z' )
+                  {
+                     zType = inTypes.get( i );
+                     if ( lor == 0 )
+                        zLeft = true;
+                  }
+               }
+            }
+            else
+            {
+               if ( !placedFunc && inTypes.get( i ) == f_outType )
+               {
+                  temp += " " + placeFunc();
+                  continue;
+               }
+               if ( lor == 0 )
+               {
+                  if ( xType == inTypes.get( i ) || xType == -1 )
+                     validTypes.add( 'x' );
+                  if ( yType == inTypes.get( i ) || yType == -1 )
+                     validTypes.add( 'y' );
+                  if ( zType == inTypes.get( i ) || zType == -1 )
+                     validTypes.add( 'z' );
+               }
+               else if ( lor == 1 )
+               {
+                  if ( xType == inTypes.get( i ) && xLeft )
+                     validTypes.add( 'x' );
+                  if ( yType == inTypes.get( i ) && yLeft )
+                     validTypes.add( 'y' );
+                  if ( zType == inTypes.get( i ) && zLeft )
+                     validTypes.add( 'z' );
+               }
+               char tmp;
+               tmp = validTypes.get( rng.nextInt( validTypes.size() ) );
+               temp += " " + tmp;
+               if ( tmp == 'x' )
+               {
+                  xType = inTypes.get( i );
+                  if ( lor == 0 )
+                     xLeft = true;
+               }
+               else if ( tmp == 'y' )
+               {
+                  yType = inTypes.get( i );
+                  if ( lor == 0 )
+                     yLeft = true;
+               }
+               else if ( tmp == 'z' )
+               {
+                  zType = inTypes.get( i );
+                  if ( lor == 0 )
+                     zLeft = true;
+               }
+            }
+            validTypes.clear();
+         }
+         curDepth = 1;
+         
+         return temp;
+      }
+      catch ( Exception e )
+      {
+         saveIt = false;
+         return " Q";
+      }
+   }
+   
+   //------------------ placeFunc ---------------------------------------------
+   /**
+    * Place the function within the step case of the theory
+    */
+   private String placeFunc( )
+   {
+      placedFunc = true;
+      String temp = "(f";
+      ArrayList<Character> validTypes = new ArrayList<Character>( );
+      boolean useStruct = false;
+      
+      // first parameter
+      if ( xType == f_inType1 && xLeft )
+         validTypes.add( 'x' );
+      if ( yType == f_inType1 && yLeft )
+         validTypes.add( 'y' );
+      if ( zType == f_inType1 && zLeft )
+         validTypes.add( 'z' );
+      // if no variables are valid, use a constructor function
+      if ( validTypes.size() == 0 )
+         useStruct = true;
+      if ( useStruct )
+         temp += " " + doStruct( f_inType1, 'q' );
+      else
+      {
+         char tmp = validTypes.get( rng.nextInt( validTypes.size() ) );
+         temp += " " + tmp;
+      }
+      useStruct = false;
+      
+      // second parameter
+      validTypes.clear();
+      if ( xType == f_inType2 && xLeft )
+         validTypes.add( 'x' );
+      if ( yType == f_inType2 && yLeft )
+         validTypes.add( 'y' );
+      if ( zType == f_inType2 && zLeft )
+         validTypes.add( 'z' );
+      // if no variables are valid, use a constructor function
+      if ( validTypes.size() == 0 )
+         useStruct = true;
+      if ( useStruct )
+         temp += " " + doStruct( f_inType2, 'q' );
+      else
+      {
+         char tmp = validTypes.get( rng.nextInt( validTypes.size() ) );
+         temp += " " + tmp;
+      }
+      
+      temp += ")";
+      return temp;
+   }
+   
+   //------------------ makeLemma ---------------------------------------------
+   /**
+    * Produce a theorem to be proven via the generated theory
+    */
+   private String makeLemma( )
+   {
+      String f1 = makeFunc();
+      String f2 = makeFunc();
+      // the functions must be different from each other
+      if ( f1.equals( f2 ) )
+         return makeLemma();
+      else
+      {
+         int temp = Math.max( f2.lastIndexOf( "x" ), f2.lastIndexOf( "y" ) );
+         temp = Math.max( f2.lastIndexOf( "z" ), temp );
+         if ( temp == f2.lastIndexOf( "x" ) )
+            inductOn = "x";
+         else if ( temp == f2.lastIndexOf( "y" ) )
+            inductOn = "y";
+         else if ( temp == f2.lastIndexOf( "z" ) )
+            inductOn = "z";
+         return "lemma \"" + f1 + " = " + f2 + "\"";
+      }
+   }
+   
+   //------------------- makeFunc ---------------------------------------------
+   /**
+    * Generate a function within a function for the proposed theorem
+    */
+   private String makeFunc( )
+   {
+      String temp = "(f";
+      ArrayList<Character> validTypes = new ArrayList<Character>( );
+      int fork = 0;
+      
+      if ( curDepth < maxDepth )
+      {
+         // first parameter
+         if ( f_inType1 == f_outType )
+            fork = rng.nextInt( 3 ) + 1;
+         else
+            fork = 2;
+         if ( fork == 1 )
+         {
+            curDepth++;
+            temp += " " + makeFunc();
+         }
+         else
+         {
+            if ( lor == 0 )
+            {
+               if ( lemXType == f_inType1 || lemXType == -1 )
+                  validTypes.add( 'x' );
+               if ( lemYType == f_inType1 || lemYType == -1 )
+                  validTypes.add( 'y' );
+               if ( lemZType == f_inType1 || lemZType == -1 )
+                  validTypes.add( 'z' );
+            }
+            else if ( lor == 1 )
+            {
+               if ( lemXType == f_inType1 && lemXLeft )
+                  validTypes.add( 'x' );
+               if ( lemYType == f_inType1 && lemYLeft )
+                  validTypes.add( 'y' );
+               if ( lemZType == f_inType1 && lemZLeft )
+                  validTypes.add( 'z' );
+            }
+            char tmp = validTypes.get( rng.nextInt( validTypes.size() ) );
+            temp += " " + tmp;
+            if ( tmp == 'x' )
+            {
+               lemXType = f_inType1;
+               if ( lor == 0 )
+                  lemXLeft = true;
+            }
+            else if ( tmp == 'y' )
+            {
+               lemYType = f_inType1;
+               if ( lor == 0 )
+                  lemYLeft = true;
+            }
+            else if ( tmp == 'z' )
+            {
+               lemZType = f_inType1;
+               if ( lor == 0 )
+                  lemZLeft = true;
+            }
+         }
+         
+         // second parameter
+         validTypes.clear();
+         if ( f_inType2 == f_outType )
+            fork = rng.nextInt( 3 ) + 1;
+         else
+            fork = 2;
+         if ( fork == 1 )
+         {
+            curDepth++;
+            temp += " " + makeFunc();
+         }
+         else
+         {
+            if ( lor == 0 )
+            {
+               if ( lemXType == f_inType2 || lemXType == -1 )
+                  validTypes.add( 'x' );
+               if ( lemYType == f_inType2 || lemYType == -1 )
+                  validTypes.add( 'y' );
+               if ( lemZType == f_inType2 || lemZType == -1 )
+                  validTypes.add( 'z' );
+            }
+            else if ( lor == 1 )
+            {
+               if ( lemXType == f_inType2 && lemXLeft )
+                  validTypes.add( 'x' );
+               if ( lemYType == f_inType2 && lemYLeft )
+                  validTypes.add( 'y' );
+               if ( lemZType == f_inType2 && lemZLeft )
+                  validTypes.add( 'z' );
+            }
+            char tmp = validTypes.get( rng.nextInt( validTypes.size() ) );
+            temp += " " + tmp;
+            if ( tmp == 'x' )
+            {
+               lemXType = f_inType2;
+               if ( lor == 0 )
+                  lemXLeft = true;
+            }
+            else if ( tmp == 'y' )
+            {
+               lemYType = f_inType2;
+               if ( lor == 0 )
+                  lemYLeft = true;
+            }
+            else if ( tmp == 'z' )
+            {
+               lemZType = f_inType2;
+               if ( lor == 0 )
+                  lemZLeft = true;
+            }
+         }
+      }
+      else
+      {
+         // first parameter
+         if ( lor == 0 )
+         {
+            if ( lemXType == f_inType1 || lemXType == -1 )
+               validTypes.add( 'x' );
+            if ( lemYType == f_inType1 || lemYType == -1 )
+               validTypes.add( 'y' );
+            if ( lemZType == f_inType1 || lemZType == -1 )
+               validTypes.add( 'z' );
+         }
+         else if ( lor == 1 )
+         {
+            if ( lemXType == f_inType1 && lemXLeft )
+               validTypes.add( 'x' );
+            if ( lemYType == f_inType1 && lemYLeft )
+               validTypes.add( 'y' );
+            if ( lemZType == f_inType1 && lemZLeft )
+               validTypes.add( 'z' );
+         }
+         char tmp = validTypes.get( rng.nextInt( validTypes.size() ) );
+         temp += " " + tmp;
+         if ( tmp == 'x' )
+         {
+            lemXType = f_inType1;
+            if ( lor == 0 )
+               lemXLeft = true;
+         }
+         else if ( tmp == 'y' )
+         {
+            lemYType = f_inType1;
+            if ( lor == 0 )
+               lemYLeft = true;
+         }
+         else if ( tmp == 'z' )
+         {
+            lemZType = f_inType1;
+            if ( lor == 0 )
+               lemZLeft = true;
+         }
+         
+         // second parameter
+         if ( lor == 0 )
+         {
+            if ( lemXType == f_inType2 || lemXType == -1 )
+               validTypes.add( 'x' );
+            if ( lemYType == f_inType2 || lemYType == -1 )
+               validTypes.add( 'y' );
+            if ( lemZType == f_inType2 || lemZType == -1 )
+               validTypes.add( 'z' );
+         }
+         else if ( lor == 1 )
+         {
+            if ( lemXType == f_inType2 && lemXLeft )
+               validTypes.add( 'x' );
+            if ( lemYType == f_inType2 && lemYLeft )
+               validTypes.add( 'y' );
+            if ( lemZType == f_inType2 && lemZLeft )
+               validTypes.add( 'z' );
+         }
+         tmp = validTypes.get( rng.nextInt( validTypes.size() ) );
+         temp += " " + tmp;
+         if ( tmp == 'x' )
+         {
+            lemXType = f_inType2;
+            if ( lor == 0 )
+               lemXLeft = true;
+         }
+         else if ( tmp == 'y' )
+         {
+            lemYType = f_inType2;
+            if ( lor == 0 )
+               lemYLeft = true;
+         }
+         else if ( tmp == 'z' )
+         {
+            lemZType = f_inType2;
+            if ( lor == 0 )
+               lemZLeft = true;
+         }
+         curDepth = 1;
+      }
+      
+      temp += ")";
+      return temp;
+   }
+   
+   //-------------------- writeMe ---------------------------------------------
+   /**
+    * Write the string to TheGenerator.thy, outputting some cursory data
+    */
+   private void writeMe( )
+   {
+      System.out.println( "xType = " + xType );
+      System.out.println( "yType = " + yType );
+      System.out.println( "zType = " + zType );
+      System.out.println( "CaType = " + caType );
+      System.out.println( "CbType = " + cbType );
+      System.out.println( "CcType = " + ccType );
+      System.out.println( "CdType = " + cdType );
+      System.out.println( "f input type 1 = " + f_inType1 );
+      System.out.println( "f input type 2 = " + f_inType2 );
+      System.out.println( "f output type = " + f_outType );
+      try {
+         FileWriter outFile = new FileWriter( "TheGenerator.thy" );
+         PrintWriter out = new PrintWriter( outFile );
+         out.println( bfs );
+         out.close();
+      } catch ( IOException e ) {
+         e.printStackTrace();
+      }
+   }
+   
+   //------------------ rewriteLemma ------------------------------------------
+   /**
+    * Write the new lemma to the theory file
+    */
+   private void rewriteLemma( )
+   {
+      try {
+         // read from the file and change the lemma
+         File inFile = new File( "TheGenerator.thy" );
+         Scanner scan = new Scanner( inFile );
+         String newFile = scan.nextLine();
+         String temp;
+         while ( scan.hasNextLine() )
+         {
+            temp = '\n' + scan.nextLine();
+            if ( temp.startsWith( "lemma" ) )
+               newFile += bfs;
+            else
+               newFile += temp;
+         }
+         
+         // now write the new lemma to the file
+         FileWriter outFile = new FileWriter( "TheGenerator.thy" );
+         PrintWriter out = new PrintWriter( outFile );
+         out.println( newFile );
+         out.close();
+      } catch ( Exception e ) {
+         e.printStackTrace();
+      }
+   }
+   
+   //--------------------- main -----------------------------------------------
+   /**
+    * the startup function
+    */
+   public static void main( String[] args )
+   {
+      if ( args.length > 0 )
+         new TheRandomizer( 1 );
+      else
+         new TheRandomizer( 0 );
+   }
+}
